@@ -1,0 +1,4 @@
+dlt[clickhouse]>=1.4.0
+dlt[facebook_ads]>=1.4.0
+dlt[google_analytics]>=1.4.0
+dlt[google_ads]>=1.4.0
