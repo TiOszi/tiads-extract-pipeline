@@ -1,12 +1,18 @@
+"""
+Google Ads → ClickHouse (dataset único: google_ads)
+customer_id e client_slug são colunas nas tabelas
+"""
 import os
+import sys
 import pendulum
 from google.ads.googleads.client import GoogleAdsClient
 from ch_utils import get_client, ensure_table, insert_rows
 
-
 DATASET = "google_ads"
 
 CAMPAIGNS_COLUMNS = {
+    "customer_id": "String",
+    "client_slug": "String",
     "id": "String",
     "name": "String",
     "status": "String",
@@ -17,6 +23,8 @@ CAMPAIGNS_COLUMNS = {
 }
 
 PERFORMANCE_COLUMNS = {
+    "customer_id": "String",
+    "client_slug": "String",
     "date": "Date",
     "campaign_id": "String",
     "campaign_name": "String",
@@ -31,7 +39,7 @@ PERFORMANCE_COLUMNS = {
 }
 
 
-def _get_google_client() -> GoogleAdsClient:
+def _build_google_client() -> GoogleAdsClient:
     return GoogleAdsClient.load_from_dict({
         "developer_token": os.environ["GOOGLE_ADS_DEVELOPER_TOKEN"],
         "client_id": os.environ["GOOGLE_CLIENT_ID"],
@@ -41,19 +49,23 @@ def _get_google_client() -> GoogleAdsClient:
     })
 
 
-def extract_campaigns(customer_id: str) -> list[dict]:
-    client = _get_google_client()
-    ga_service = client.get_service("GoogleAdsService")
-    query = """
+def run(customer_id: str, client_slug: str):
+    normalized_id = customer_id.replace("-", "")
+    gads = _build_google_client()
+    ga_service = gads.get_service("GoogleAdsService")
+
+    # --- Campaigns ---
+    campaign_rows = []
+    for batch in ga_service.search_stream(customer_id=normalized_id, query="""
         SELECT campaign.id, campaign.name, campaign.status,
                campaign.advertising_channel_type, campaign.start_date,
                campaign.end_date, campaign_budget.amount_micros
         FROM campaign ORDER BY campaign.id
-    """
-    rows = []
-    for batch in ga_service.search_stream(customer_id=customer_id, query=query):
+    """):
         for row in batch.results:
-            rows.append({
+            campaign_rows.append({
+                "customer_id": customer_id,
+                "client_slug": client_slug,
                 "id": str(row.campaign.id),
                 "name": row.campaign.name,
                 "status": row.campaign.status.name,
@@ -62,24 +74,21 @@ def extract_campaigns(customer_id: str) -> list[dict]:
                 "end_date": row.campaign.end_date,
                 "budget_micros": row.campaign_budget.amount_micros,
             })
-    return rows
 
-
-def extract_performance(customer_id: str) -> list[dict]:
-    client = _get_google_client()
-    ga_service = client.get_service("GoogleAdsService")
+    # --- Performance ---
     yesterday = pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d")
-    query = f"""
+    performance_rows = []
+    for batch in ga_service.search_stream(customer_id=normalized_id, query=f"""
         SELECT segments.date, campaign.id, campaign.name,
                ad_group.id, ad_group.name, metrics.impressions,
                metrics.clicks, metrics.cost_micros, metrics.ctr,
                metrics.average_cpc, metrics.conversions
         FROM ad_group_ad WHERE segments.date = '{yesterday}'
-    """
-    rows = []
-    for batch in ga_service.search_stream(customer_id=customer_id, query=query):
+    """):
         for row in batch.results:
-            rows.append({
+            performance_rows.append({
+                "customer_id": customer_id,
+                "client_slug": client_slug,
                 "date": row.segments.date,
                 "campaign_id": str(row.campaign.id),
                 "campaign_name": row.campaign.name,
@@ -92,23 +101,23 @@ def extract_performance(customer_id: str) -> list[dict]:
                 "average_cpc": row.metrics.average_cpc,
                 "conversions": row.metrics.conversions,
             })
-    return rows
+
+    ch = get_client()
+    ensure_table(ch, DATASET, "campaigns", CAMPAIGNS_COLUMNS)
+    ensure_table(ch, DATASET, "ads_performance", PERFORMANCE_COLUMNS)
+    n1 = insert_rows(ch, DATASET, "campaigns", campaign_rows)
+    n2 = insert_rows(ch, DATASET, "ads_performance", performance_rows)
+    print(f"✅ [{client_slug}] {n1} campanhas + {n2} performance → {DATASET}")
+    return n1 + n2
 
 
 if __name__ == "__main__":
-    customer_id = os.environ["GOOGLE_ADS_CUSTOMER_ID"]
+    customer_id = os.environ.get("GOOGLE_ADS_CUSTOMER_ID", "")
+    client_slug = os.environ.get("CLIENT_SLUG", "default")
 
-    client = get_client()
-    client.command(f"CREATE DATABASE IF NOT EXISTS `{DATASET}`")
-    ensure_table(client, DATASET, "campaigns", CAMPAIGNS_COLUMNS)
-    ensure_table(client, DATASET, "ads_performance", PERFORMANCE_COLUMNS)
+    if not customer_id:
+        print("❌ GOOGLE_ADS_CUSTOMER_ID é obrigatório")
+        sys.exit(1)
 
-    campaigns = extract_campaigns(customer_id)
-    n1 = insert_rows(client, DATASET, "campaigns", campaigns)
-    print(f"✅ google_ads.campaigns: {n1} registros inseridos")
-
-    performance = extract_performance(customer_id)
-    n2 = insert_rows(client, DATASET, "ads_performance", performance)
-    print(f"✅ google_ads.ads_performance: {n2} registros inseridos")
-
-    print(f"✅ Google Ads concluído: {n1 + n2} registros totais")
+    total = run(customer_id, client_slug)
+    print(f"📊 Total: {total} registros")

@@ -1,4 +1,9 @@
+"""
+GA4 → ClickHouse (dataset único: ga4)
+property_id e client_slug são colunas nas tabelas
+"""
 import os
+import sys
 import pendulum
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
@@ -6,10 +11,11 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from ch_utils import get_client, ensure_table, insert_rows
 
-
 DATASET = "ga4"
 
 SESSIONS_COLUMNS = {
+    "property_id": "String",
+    "client_slug": "String",
     "date": "Date",
     "session_source": "String",
     "session_medium": "String",
@@ -21,6 +27,8 @@ SESSIONS_COLUMNS = {
 }
 
 CONVERSIONS_COLUMNS = {
+    "property_id": "String",
+    "client_slug": "String",
     "date": "Date",
     "event_name": "String",
     "event_count": "Int64",
@@ -28,7 +36,7 @@ CONVERSIONS_COLUMNS = {
 }
 
 
-def _get_ga4_client() -> BetaAnalyticsDataClient:
+def _build_ga4_client() -> BetaAnalyticsDataClient:
     creds = Credentials(
         token=None,
         refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
@@ -40,10 +48,12 @@ def _get_ga4_client() -> BetaAnalyticsDataClient:
     return BetaAnalyticsDataClient(credentials=creds)
 
 
-def extract_sessions(property_id: str) -> list[dict]:
-    client = _get_ga4_client()
+def run(property_id: str, client_slug: str):
+    client = _build_ga4_client()
     yesterday = pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d")
-    response = client.run_report(RunReportRequest(
+
+    # --- Sessions ---
+    resp = client.run_report(RunReportRequest(
         property=f"properties/{property_id}",
         dimensions=[
             Dimension(name="date"), Dimension(name="sessionSource"),
@@ -55,53 +65,53 @@ def extract_sessions(property_id: str) -> list[dict]:
         ],
         date_ranges=[DateRange(start_date=yesterday, end_date=yesterday)],
     ))
-    rows = []
-    for row in response.rows:
+    sessions_rows = []
+    for row in resp.rows:
         d = [v.value for v in row.dimension_values]
         m = [v.value for v in row.metric_values]
-        rows.append({
+        sessions_rows.append({
+            "property_id": property_id,
+            "client_slug": client_slug,
             "date": d[0], "session_source": d[1],
             "session_medium": d[2], "session_campaign_name": d[3],
             "sessions": int(m[0] or 0), "bounce_rate": float(m[1] or 0),
             "avg_session_duration": float(m[2] or 0), "page_views": int(m[3] or 0),
         })
-    return rows
 
-
-def extract_conversions(property_id: str) -> list[dict]:
-    client = _get_ga4_client()
-    yesterday = pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d")
-    response = client.run_report(RunReportRequest(
+    # --- Conversions ---
+    resp2 = client.run_report(RunReportRequest(
         property=f"properties/{property_id}",
         dimensions=[Dimension(name="date"), Dimension(name="eventName")],
         metrics=[Metric(name="eventCount"), Metric(name="conversions")],
         date_ranges=[DateRange(start_date=yesterday, end_date=yesterday)],
     ))
-    rows = []
-    for row in response.rows:
+    conversion_rows = []
+    for row in resp2.rows:
         d = [v.value for v in row.dimension_values]
         m = [v.value for v in row.metric_values]
-        rows.append({
+        conversion_rows.append({
+            "property_id": property_id,
+            "client_slug": client_slug,
             "date": d[0], "event_name": d[1],
             "event_count": int(m[0] or 0), "conversions": float(m[1] or 0),
         })
-    return rows
+
+    ch = get_client()
+    ensure_table(ch, DATASET, "sessions_by_source", SESSIONS_COLUMNS)
+    ensure_table(ch, DATASET, "conversions", CONVERSIONS_COLUMNS)
+    n1 = insert_rows(ch, DATASET, "sessions_by_source", sessions_rows)
+    n2 = insert_rows(ch, DATASET, "conversions", conversion_rows)
+    print(f"✅ [{client_slug}] {n1} sessões + {n2} conversões → {DATASET}")
+    return n1 + n2
 
 
 if __name__ == "__main__":
-    property_id = os.environ["GA4_PROPERTY_ID"]
+    property_id = os.environ.get("GA4_PROPERTY_ID", "")
+    client_slug = os.environ.get("CLIENT_SLUG", "default")
 
-    client = get_client()
-    client.command(f"CREATE DATABASE IF NOT EXISTS `{DATASET}`")
-    ensure_table(client, DATASET, "sessions_by_source", SESSIONS_COLUMNS)
-    ensure_table(client, DATASET, "conversions", CONVERSIONS_COLUMNS)
+    if not property_id:
+        print("❌ GA4_PROPERTY_ID é obrigatório")
+        sys.exit(1)
 
-    sessions = extract_sessions(property_id)
-    n1 = insert_rows(client, DATASET, "sessions_by_source", sessions)
-    print(f"✅ ga4.sessions_by_source: {n1} registros inseridos")
-
-    conversions = extract_conversions(property_id)
-    n2 = insert_rows(client, DATASET, "conversions", conversions)
-    print(f"✅ ga4.conversions: {n2} registros inseridos")
-
-    print(f"✅ GA4 concluído: {n1 + n2} registros totais")
+    total = run(property_id, client_slug)
+    print(f"📊 Total: {total} registros")

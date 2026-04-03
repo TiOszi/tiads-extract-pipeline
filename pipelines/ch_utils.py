@@ -16,7 +16,8 @@ def get_client() -> Client:
 
 
 def ensure_table(client: Client, dataset: str, table: str, columns: dict) -> None:
-    """Cria tabela no ClickHouse se não existir."""
+    """Cria banco e tabela no ClickHouse se não existirem."""
+    client.command(f"CREATE DATABASE IF NOT EXISTS `{dataset}`")
     cols_ddl = ",\n    ".join(
         f"`{col}` {dtype}" for col, dtype in columns.items()
     )

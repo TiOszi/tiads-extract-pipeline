@@ -1,4 +1,9 @@
+"""
+Meta Ads → ClickHouse (dataset único: meta_ads)
+account_id e client_slug são colunas nas tabelas
+"""
 import os
+import sys
 import pendulum
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
@@ -6,10 +11,11 @@ from facebook_business.adobjects.adsinsights import AdsInsights
 from facebook_business.adobjects.campaign import Campaign
 from ch_utils import get_client, ensure_table, insert_rows
 
-
 DATASET = "meta_ads"
 
 INSIGHTS_COLUMNS = {
+    "account_id": "String",
+    "client_slug": "String",
     "date_start": "Date",
     "date_stop": "Date",
     "campaign_id": "String",
@@ -28,6 +34,8 @@ INSIGHTS_COLUMNS = {
 }
 
 CAMPAIGNS_COLUMNS = {
+    "account_id": "String",
+    "client_slug": "String",
     "id": "String",
     "name": "String",
     "status": "String",
@@ -39,10 +47,12 @@ CAMPAIGNS_COLUMNS = {
 }
 
 
-def extract_insights(account_id: str, access_token: str) -> list[dict]:
+def run(account_id: str, access_token: str, client_slug: str):
     FacebookAdsApi.init(access_token=access_token)
-    account = AdAccount(f"act_{account_id.lstrip('act_').lstrip('ACT_')}")
+    normalized_id = account_id.lstrip("act_").lstrip("ACT_")
+    account = AdAccount(f"act_{normalized_id}")
 
+    # --- Insights ---
     fields = [
         AdsInsights.Field.date_start, AdsInsights.Field.date_stop,
         AdsInsights.Field.campaign_id, AdsInsights.Field.campaign_name,
@@ -52,7 +62,6 @@ def extract_insights(account_id: str, access_token: str) -> list[dict]:
         AdsInsights.Field.spend, AdsInsights.Field.reach,
         AdsInsights.Field.cpm, AdsInsights.Field.cpc, AdsInsights.Field.ctr,
     ]
-
     params = {
         "time_range": {
             "since": pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d"),
@@ -62,53 +71,68 @@ def extract_insights(account_id: str, access_token: str) -> list[dict]:
         "time_increment": 1,
     }
 
-    rows = []
+    insights_rows = []
     for insight in account.get_insights(fields=fields, params=params):
         row = dict(insight)
-        row["impressions"] = int(row.get("impressions", 0) or 0)
-        row["clicks"] = int(row.get("clicks", 0) or 0)
-        row["reach"] = int(row.get("reach", 0) or 0)
-        row["spend"] = float(row.get("spend", 0) or 0)
-        row["cpm"] = float(row.get("cpm", 0) or 0)
-        row["cpc"] = float(row.get("cpc", 0) or 0)
-        row["ctr"] = float(row.get("ctr", 0) or 0)
-        rows.append({k: row.get(k) for k in INSIGHTS_COLUMNS})
-    return rows
+        insights_rows.append({
+            "account_id": account_id,
+            "client_slug": client_slug,
+            "date_start": row.get("date_start"),
+            "date_stop": row.get("date_stop"),
+            "campaign_id": str(row.get("campaign_id", "")),
+            "campaign_name": str(row.get("campaign_name", "")),
+            "adset_id": str(row.get("adset_id", "")),
+            "adset_name": str(row.get("adset_name", "")),
+            "ad_id": str(row.get("ad_id", "")),
+            "ad_name": str(row.get("ad_name", "")),
+            "impressions": int(row.get("impressions", 0) or 0),
+            "clicks": int(row.get("clicks", 0) or 0),
+            "spend": float(row.get("spend", 0) or 0),
+            "reach": int(row.get("reach", 0) or 0),
+            "cpm": float(row.get("cpm", 0) or 0),
+            "cpc": float(row.get("cpc", 0) or 0),
+            "ctr": float(row.get("ctr", 0) or 0),
+        })
 
-
-def extract_campaigns(account_id: str, access_token: str) -> list[dict]:
-    FacebookAdsApi.init(access_token=access_token)
-    account = AdAccount(f"act_{account_id.lstrip('act_').lstrip('ACT_')}")
-    fields = [
+    # --- Campaigns ---
+    campaign_rows = []
+    for c in account.get_campaigns(fields=[
         Campaign.Field.id, Campaign.Field.name, Campaign.Field.status,
         Campaign.Field.objective, Campaign.Field.daily_budget,
         Campaign.Field.lifetime_budget, Campaign.Field.start_time,
         Campaign.Field.stop_time,
-    ]
-    rows = []
-    for c in account.get_campaigns(fields=fields):
+    ]):
         row = dict(c)
-        row["daily_budget"] = float(row.get("daily_budget", 0) or 0) / 100
-        row["lifetime_budget"] = float(row.get("lifetime_budget", 0) or 0) / 100
-        rows.append({k: str(row.get(k, "")) for k in CAMPAIGNS_COLUMNS})
-    return rows
+        campaign_rows.append({
+            "account_id": account_id,
+            "client_slug": client_slug,
+            "id": str(row.get("id", "")),
+            "name": str(row.get("name", "")),
+            "status": str(row.get("status", "")),
+            "objective": str(row.get("objective", "")),
+            "daily_budget": float(row.get("daily_budget", 0) or 0) / 100,
+            "lifetime_budget": float(row.get("lifetime_budget", 0) or 0) / 100,
+            "start_time": str(row.get("start_time", "")),
+            "stop_time": str(row.get("stop_time", "")),
+        })
+
+    ch = get_client()
+    ensure_table(ch, DATASET, "ads_insights", INSIGHTS_COLUMNS)
+    ensure_table(ch, DATASET, "campaigns", CAMPAIGNS_COLUMNS)
+    n1 = insert_rows(ch, DATASET, "ads_insights", insights_rows)
+    n2 = insert_rows(ch, DATASET, "campaigns", campaign_rows)
+    print(f"✅ [{client_slug}] {n1} insights + {n2} campanhas → {DATASET}")
+    return n1 + n2
 
 
 if __name__ == "__main__":
-    account_id = os.environ["META_ADS_ACCOUNT_ID"]
-    access_token = os.environ["META_ADS_ACCESS_TOKEN"]
+    account_id   = os.environ.get("META_ADS_ACCOUNT_ID", "")
+    access_token = os.environ.get("META_ADS_ACCESS_TOKEN", "")
+    client_slug  = os.environ.get("CLIENT_SLUG", "default")
 
-    client = get_client()
-    client.command(f"CREATE DATABASE IF NOT EXISTS `{DATASET}`")
-    ensure_table(client, DATASET, "ads_insights", INSIGHTS_COLUMNS)
-    ensure_table(client, DATASET, "campaigns", CAMPAIGNS_COLUMNS)
+    if not account_id or not access_token:
+        print("❌ META_ADS_ACCOUNT_ID e META_ADS_ACCESS_TOKEN são obrigatórios")
+        sys.exit(1)
 
-    insights = extract_insights(account_id, access_token)
-    n1 = insert_rows(client, DATASET, "ads_insights", insights)
-    print(f"✅ meta_ads.ads_insights: {n1} registros inseridos")
-
-    campaigns = extract_campaigns(account_id, access_token)
-    n2 = insert_rows(client, DATASET, "campaigns", campaigns)
-    print(f"✅ meta_ads.campaigns: {n2} registros inseridos")
-
-    print(f"✅ Meta Ads concluído: {n1 + n2} registros totais")
+    total = run(account_id, access_token, client_slug)
+    print(f"📊 Total: {total} registros")
