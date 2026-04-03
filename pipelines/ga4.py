@@ -1,18 +1,24 @@
 import os
 import dlt
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
-from google.analytics.data_v1beta.types import (
-    DateRange,
-    Dimension,
-    Metric,
-    RunReportRequest,
-)
+from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
 from google.oauth2.credentials import Credentials
 from typing import Iterator
 import pendulum
 
 
-def _get_client() -> BetaAnalyticsDataClient:
+def _ch_credentials() -> dict:
+    return {
+        "host": os.environ["CLICKHOUSE_HOST"],
+        "database": os.environ["CLICKHOUSE_DATABASE"],
+        "username": os.environ["CLICKHOUSE_USER"],
+        "password": os.environ["CLICKHOUSE_PASSWORD"],
+        "http_port": int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")),
+        "secure": bool(int(os.environ.get("CLICKHOUSE_SECURE", "0"))),
+    }
+
+
+def _get_ga4_client() -> BetaAnalyticsDataClient:
     creds = Credentials(
         token=None,
         refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
@@ -28,9 +34,8 @@ def ga4_source(property_id: str):
 
     @dlt.resource(name="sessions_by_source", write_disposition="append")
     def sessions_by_source() -> Iterator[dict]:
-        client = _get_client()
+        client = _get_ga4_client()
         yesterday = pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d")
-
         request = RunReportRequest(
             property=f"properties/{property_id}",
             dimensions=[
@@ -47,11 +52,9 @@ def ga4_source(property_id: str):
             ],
             date_ranges=[DateRange(start_date=yesterday, end_date=yesterday)],
         )
-
         response = client.run_report(request)
         dim_headers = [h.name for h in response.dimension_headers]
         met_headers = [h.name for h in response.metric_headers]
-
         for row in response.rows:
             record = {}
             for i, dim in enumerate(row.dimension_values):
@@ -62,9 +65,8 @@ def ga4_source(property_id: str):
 
     @dlt.resource(name="conversions", write_disposition="append")
     def conversions() -> Iterator[dict]:
-        client = _get_client()
+        client = _get_ga4_client()
         yesterday = pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d")
-
         request = RunReportRequest(
             property=f"properties/{property_id}",
             dimensions=[
@@ -77,11 +79,9 @@ def ga4_source(property_id: str):
             ],
             date_ranges=[DateRange(start_date=yesterday, end_date=yesterday)],
         )
-
         response = client.run_report(request)
         dim_headers = [h.name for h in response.dimension_headers]
         met_headers = [h.name for h in response.metric_headers]
-
         for row in response.rows:
             record = {}
             for i, dim in enumerate(row.dimension_values):
@@ -97,12 +97,7 @@ if __name__ == "__main__":
     pipeline = dlt.pipeline(
         pipeline_name="ga4",
         destination=dlt.destinations.clickhouse(
-            credentials={
-                "host": os.environ["CLICKHOUSE_HOST"],
-                "database": os.environ["CLICKHOUSE_DATABASE"],
-                "username": os.environ["CLICKHOUSE_USER"],
-                "password": os.environ["CLICKHOUSE_PASSWORD"],
-            }
+            credentials=_ch_credentials()
         ),
         dataset_name="ga4",
     )

@@ -3,8 +3,21 @@ import dlt
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 from facebook_business.adobjects.adsinsights import AdsInsights
+from facebook_business.adobjects.campaign import Campaign
 from typing import Iterator
 import pendulum
+
+
+def _ch_credentials() -> dict:
+    return {
+        "host": os.environ["CLICKHOUSE_HOST"],
+        "database": os.environ["CLICKHOUSE_DATABASE"],
+        "username": os.environ["CLICKHOUSE_USER"],
+        "password": os.environ["CLICKHOUSE_PASSWORD"],
+        "http_port": int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")),
+        "secure": bool(int(os.environ.get("CLICKHOUSE_SECURE", "0"))),
+    }
+
 
 @dlt.source
 def meta_ads_source(account_id: str, access_token: str):
@@ -47,7 +60,6 @@ def meta_ads_source(account_id: str, access_token: str):
 
     @dlt.resource(name="campaigns", write_disposition="replace")
     def campaigns() -> Iterator[dict]:
-        from facebook_business.adobjects.campaign import Campaign
         FacebookAdsApi.init(access_token=access_token)
         account = AdAccount(f"act_{account_id.lstrip('act_').lstrip('ACT_')}")
         fields = [
@@ -70,12 +82,7 @@ if __name__ == "__main__":
     pipeline = dlt.pipeline(
         pipeline_name="meta_ads",
         destination=dlt.destinations.clickhouse(
-            credentials={
-                "host": os.environ["CLICKHOUSE_HOST"],
-                "database": os.environ["CLICKHOUSE_DATABASE"],
-                "username": os.environ["CLICKHOUSE_USER"],
-                "password": os.environ["CLICKHOUSE_PASSWORD"],
-            }
+            credentials=_ch_credentials()
         ),
         dataset_name="meta_ads",
     )

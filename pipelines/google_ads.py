@@ -2,8 +2,21 @@ import os
 import dlt
 from google.ads.googleads.client import GoogleAdsClient
 from typing import Iterator
+import pendulum
 
-def _get_client() -> GoogleAdsClient:
+
+def _ch_credentials() -> dict:
+    return {
+        "host": os.environ["CLICKHOUSE_HOST"],
+        "database": os.environ["CLICKHOUSE_DATABASE"],
+        "username": os.environ["CLICKHOUSE_USER"],
+        "password": os.environ["CLICKHOUSE_PASSWORD"],
+        "http_port": int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")),
+        "secure": bool(int(os.environ.get("CLICKHOUSE_SECURE", "0"))),
+    }
+
+
+def _get_google_client() -> GoogleAdsClient:
     config = {
         "developer_token": os.environ["GOOGLE_ADS_DEVELOPER_TOKEN"],
         "client_id": os.environ["GOOGLE_CLIENT_ID"],
@@ -19,7 +32,7 @@ def google_ads_source(customer_id: str):
 
     @dlt.resource(name="campaigns", write_disposition="replace")
     def campaigns() -> Iterator[dict]:
-        client = _get_client()
+        client = _get_google_client()
         ga_service = client.get_service("GoogleAdsService")
         query = """
             SELECT
@@ -48,8 +61,7 @@ def google_ads_source(customer_id: str):
 
     @dlt.resource(name="ads_performance", write_disposition="append")
     def ads_performance() -> Iterator[dict]:
-        import pendulum
-        client = _get_client()
+        client = _get_google_client()
         ga_service = client.get_service("GoogleAdsService")
         yesterday = pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d")
         query = f"""
@@ -92,12 +104,7 @@ if __name__ == "__main__":
     pipeline = dlt.pipeline(
         pipeline_name="google_ads",
         destination=dlt.destinations.clickhouse(
-            credentials={
-                "host": os.environ["CLICKHOUSE_HOST"],
-                "database": os.environ["CLICKHOUSE_DATABASE"],
-                "username": os.environ["CLICKHOUSE_USER"],
-                "password": os.environ["CLICKHOUSE_PASSWORD"],
-            }
+            credentials=_ch_credentials()
         ),
         dataset_name="google_ads",
     )
