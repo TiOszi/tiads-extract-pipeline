@@ -7,5 +7,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY pipelines/ ./pipelines/
 
+# Container fica idle — executado sob demanda pelo N8N via docker run
 ENTRYPOINT ["python"]
-CMD ["pipelines/meta_ads.py"]
+CMD ["-c", "print('tiads-extract-pipeline pronto.')"]
