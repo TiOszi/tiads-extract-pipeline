@@ -1,4 +1,5 @@
 dlt[clickhouse]>=1.4.0
-dlt[facebook_ads]>=1.4.0
-dlt[google_analytics]>=1.4.0
-dlt[google_ads]>=1.4.0
+facebook-business>=19.0.0
+google-ads>=24.0.0
+google-analytics-data>=0.18.0
+google-auth>=2.0.0
