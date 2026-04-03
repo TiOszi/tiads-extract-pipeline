@@ -1,5 +1,7 @@
-dlt[clickhouse]>=1.4.0
+dlt>=1.4.0
+clickhouse-connect>=0.7.0
 facebook-business>=19.0.0
 google-ads>=24.0.0
 google-analytics-data>=0.18.0
 google-auth>=2.0.0
+pendulum>=3.0.0
