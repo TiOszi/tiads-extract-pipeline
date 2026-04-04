@@ -16,8 +16,9 @@ def get_client() -> Client:
 
 
 def ensure_table(client: Client, dataset: str, table: str, columns: dict) -> None:
-    """Cria banco e tabela no ClickHouse se não existirem."""
+    """Cria tabela se não existir e adiciona colunas faltantes se já existir."""
     client.command(f"CREATE DATABASE IF NOT EXISTS `{dataset}`")
+
     cols_ddl = ",\n    ".join(
         f"`{col}` {dtype}" for col, dtype in columns.items()
     )
@@ -29,6 +30,20 @@ def ensure_table(client: Client, dataset: str, table: str, columns: dict) -> Non
         ENGINE = MergeTree()
         ORDER BY tuple()
     """)
+
+    # Adiciona colunas faltantes (idempotente)
+    existing = {
+        row[0]
+        for row in client.query(
+            f"DESCRIBE TABLE `{dataset}`.`{table}`"
+        ).result_rows
+    }
+    for col, dtype in columns.items():
+        if col not in existing:
+            client.command(
+                f"ALTER TABLE `{dataset}`.`{table}` ADD COLUMN IF NOT EXISTS `{col}` {dtype}"
+            )
+            print(f"  ↳ coluna adicionada: {col} ({dtype})")
 
 
 def insert_rows(client: Client, dataset: str, table: str, rows: list[dict]) -> int:

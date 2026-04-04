@@ -5,6 +5,7 @@ account_id e client_slug são colunas nas tabelas
 import os
 import sys
 import pendulum
+from datetime import date
 from facebook_business.api import FacebookAdsApi
 from facebook_business.adobjects.adaccount import AdAccount
 from facebook_business.adobjects.adsinsights import AdsInsights
@@ -47,6 +48,13 @@ CAMPAIGNS_COLUMNS = {
 }
 
 
+def _to_date(value: str) -> date:
+    """Converte string 'YYYY-MM-DD' para datetime.date."""
+    if not value:
+        return None
+    return date.fromisoformat(value)
+
+
 def run(account_id: str, access_token: str, client_slug: str):
     FacebookAdsApi.init(access_token=access_token)
     normalized_id = account_id.lstrip("act_").lstrip("ACT_")
@@ -77,8 +85,8 @@ def run(account_id: str, access_token: str, client_slug: str):
         insights_rows.append({
             "account_id": account_id,
             "client_slug": client_slug,
-            "date_start": row.get("date_start"),
-            "date_stop": row.get("date_stop"),
+            "date_start": _to_date(row.get("date_start")),
+            "date_stop": _to_date(row.get("date_stop")),
             "campaign_id": str(row.get("campaign_id", "")),
             "campaign_name": str(row.get("campaign_name", "")),
             "adset_id": str(row.get("adset_id", "")),

@@ -5,6 +5,7 @@ property_id e client_slug são colunas nas tabelas
 import os
 import sys
 import pendulum
+from datetime import date
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
 from google.analytics.data_v1beta.types import DateRange, Dimension, Metric, RunReportRequest
 from google.oauth2.credentials import Credentials
@@ -34,6 +35,14 @@ CONVERSIONS_COLUMNS = {
     "event_count": "Int64",
     "conversions": "Float64",
 }
+
+
+def _to_date(value: str) -> date:
+    """Converte string 'YYYYMMDD' ou 'YYYY-MM-DD' para datetime.date."""
+    if not value:
+        return None
+    value = value.replace("-", "")
+    return date(int(value[:4]), int(value[4:6]), int(value[6:8]))
 
 
 def _build_ga4_client() -> BetaAnalyticsDataClient:
@@ -72,10 +81,14 @@ def run(property_id: str, client_slug: str):
         sessions_rows.append({
             "property_id": property_id,
             "client_slug": client_slug,
-            "date": d[0], "session_source": d[1],
-            "session_medium": d[2], "session_campaign_name": d[3],
-            "sessions": int(m[0] or 0), "bounce_rate": float(m[1] or 0),
-            "avg_session_duration": float(m[2] or 0), "page_views": int(m[3] or 0),
+            "date": _to_date(d[0]),
+            "session_source": d[1],
+            "session_medium": d[2],
+            "session_campaign_name": d[3],
+            "sessions": int(m[0] or 0),
+            "bounce_rate": float(m[1] or 0),
+            "avg_session_duration": float(m[2] or 0),
+            "page_views": int(m[3] or 0),
         })
 
     # --- Conversions ---
@@ -92,8 +105,10 @@ def run(property_id: str, client_slug: str):
         conversion_rows.append({
             "property_id": property_id,
             "client_slug": client_slug,
-            "date": d[0], "event_name": d[1],
-            "event_count": int(m[0] or 0), "conversions": float(m[1] or 0),
+            "date": _to_date(d[0]),
+            "event_name": d[1],
+            "event_count": int(m[0] or 0),
+            "conversions": float(m[1] or 0),
         })
 
     ch = get_client()
