@@ -1,9 +1,10 @@
 """
-Google Ads → ClickHouse (dataset único: google_ads)
-customer_id e client_slug são colunas nas tabelas
+Google Ads → ClickHouse
+Credenciais lidas de ~/.dlt/secrets.toml via dlt.secrets
 """
 import os
 import sys
+import dlt
 import pendulum
 from google.ads.googleads.client import GoogleAdsClient
 from ch_utils import get_client, ensure_table, insert_rows
@@ -41,20 +42,20 @@ PERFORMANCE_COLUMNS = {
 
 def _build_google_client() -> GoogleAdsClient:
     return GoogleAdsClient.load_from_dict({
-        "developer_token": os.environ["GOOGLE_ADS_DEVELOPER_TOKEN"],
-        "client_id": os.environ["GOOGLE_CLIENT_ID"],
-        "client_secret": os.environ["GOOGLE_CLIENT_SECRET"],
-        "refresh_token": os.environ["GOOGLE_REFRESH_TOKEN"],
+        "developer_token": dlt.secrets["google_ads.developer_token"],
+        "client_id": dlt.secrets["google.client_id"],
+        "client_secret": dlt.secrets["google.client_secret"],
+        "refresh_token": dlt.secrets["google.refresh_token"],
         "use_proto_plus": True,
     })
 
 
 def run(customer_id: str, client_slug: str):
+    from datetime import date
     normalized_id = customer_id.replace("-", "")
     gads = _build_google_client()
     ga_service = gads.get_service("GoogleAdsService")
 
-    # --- Campaigns ---
     campaign_rows = []
     for batch in ga_service.search_stream(customer_id=normalized_id, query="""
         SELECT campaign.id, campaign.name, campaign.status,
@@ -75,7 +76,6 @@ def run(customer_id: str, client_slug: str):
                 "budget_micros": row.campaign_budget.amount_micros,
             })
 
-    # --- Performance ---
     yesterday = pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d")
     performance_rows = []
     for batch in ga_service.search_stream(customer_id=normalized_id, query=f"""
@@ -89,7 +89,7 @@ def run(customer_id: str, client_slug: str):
             performance_rows.append({
                 "customer_id": customer_id,
                 "client_slug": client_slug,
-                "date": row.segments.date,
+                "date": date.fromisoformat(row.segments.date),
                 "campaign_id": str(row.campaign.id),
                 "campaign_name": row.campaign.name,
                 "ad_group_id": str(row.ad_group.id),

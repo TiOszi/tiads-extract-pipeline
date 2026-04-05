@@ -1,9 +1,10 @@
 """
-Meta Ads → ClickHouse (dataset único: meta_ads)
-account_id e client_slug são colunas nas tabelas
+Meta Ads → ClickHouse
+Credenciais lidas de ~/.dlt/secrets.toml via dlt.secrets
 """
 import os
 import sys
+import dlt
 import pendulum
 from datetime import date
 from facebook_business.api import FacebookAdsApi
@@ -49,18 +50,19 @@ CAMPAIGNS_COLUMNS = {
 
 
 def _to_date(value: str) -> date:
-    """Converte string 'YYYY-MM-DD' para datetime.date."""
     if not value:
         return None
     return date.fromisoformat(value)
 
 
-def run(account_id: str, access_token: str, client_slug: str):
+def run(account_id: str, client_slug: str):
+    # Token lido do secrets.toml — não precisa ser passado pelo N8N
+    access_token = dlt.secrets["meta_ads.access_token"]
+
     FacebookAdsApi.init(access_token=access_token)
     normalized_id = account_id.lstrip("act_").lstrip("ACT_")
     account = AdAccount(f"act_{normalized_id}")
 
-    # --- Insights ---
     fields = [
         AdsInsights.Field.date_start, AdsInsights.Field.date_stop,
         AdsInsights.Field.campaign_id, AdsInsights.Field.campaign_name,
@@ -102,7 +104,6 @@ def run(account_id: str, access_token: str, client_slug: str):
             "ctr": float(row.get("ctr", 0) or 0),
         })
 
-    # --- Campaigns ---
     campaign_rows = []
     for c in account.get_campaigns(fields=[
         Campaign.Field.id, Campaign.Field.name, Campaign.Field.status,
@@ -134,13 +135,12 @@ def run(account_id: str, access_token: str, client_slug: str):
 
 
 if __name__ == "__main__":
-    account_id   = os.environ.get("META_ADS_ACCOUNT_ID", "")
-    access_token = os.environ.get("META_ADS_ACCESS_TOKEN", "")
-    client_slug  = os.environ.get("CLIENT_SLUG", "default")
+    account_id  = os.environ.get("META_ADS_ACCOUNT_ID", "")
+    client_slug = os.environ.get("CLIENT_SLUG", "default")
 
-    if not account_id or not access_token:
-        print("❌ META_ADS_ACCOUNT_ID e META_ADS_ACCESS_TOKEN são obrigatórios")
+    if not account_id:
+        print("❌ META_ADS_ACCOUNT_ID é obrigatório")
         sys.exit(1)
 
-    total = run(account_id, access_token, client_slug)
+    total = run(account_id, client_slug)
     print(f"📊 Total: {total} registros")

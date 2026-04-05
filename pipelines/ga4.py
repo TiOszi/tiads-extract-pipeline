@@ -1,9 +1,10 @@
 """
-GA4 → ClickHouse (dataset único: ga4)
-property_id e client_slug são colunas nas tabelas
+GA4 → ClickHouse
+Credenciais lidas de ~/.dlt/secrets.toml via dlt.secrets
 """
 import os
 import sys
+import dlt
 import pendulum
 from datetime import date
 from google.analytics.data_v1beta import BetaAnalyticsDataClient
@@ -38,9 +39,6 @@ CONVERSIONS_COLUMNS = {
 
 
 def _to_date(value: str) -> date:
-    """Converte string 'YYYYMMDD' ou 'YYYY-MM-DD' para datetime.date."""
-    if not value:
-        return None
     value = value.replace("-", "")
     return date(int(value[:4]), int(value[4:6]), int(value[6:8]))
 
@@ -48,9 +46,9 @@ def _to_date(value: str) -> date:
 def _build_ga4_client() -> BetaAnalyticsDataClient:
     creds = Credentials(
         token=None,
-        refresh_token=os.environ["GOOGLE_REFRESH_TOKEN"],
-        client_id=os.environ["GOOGLE_CLIENT_ID"],
-        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+        refresh_token=dlt.secrets["google.refresh_token"],
+        client_id=dlt.secrets["google.client_id"],
+        client_secret=dlt.secrets["google.client_secret"],
         token_uri="https://oauth2.googleapis.com/token",
     )
     creds.refresh(Request())
@@ -61,7 +59,6 @@ def run(property_id: str, client_slug: str):
     client = _build_ga4_client()
     yesterday = pendulum.now("America/Sao_Paulo").subtract(days=1).strftime("%Y-%m-%d")
 
-    # --- Sessions ---
     resp = client.run_report(RunReportRequest(
         property=f"properties/{property_id}",
         dimensions=[
@@ -79,19 +76,13 @@ def run(property_id: str, client_slug: str):
         d = [v.value for v in row.dimension_values]
         m = [v.value for v in row.metric_values]
         sessions_rows.append({
-            "property_id": property_id,
-            "client_slug": client_slug,
-            "date": _to_date(d[0]),
-            "session_source": d[1],
-            "session_medium": d[2],
-            "session_campaign_name": d[3],
-            "sessions": int(m[0] or 0),
-            "bounce_rate": float(m[1] or 0),
-            "avg_session_duration": float(m[2] or 0),
-            "page_views": int(m[3] or 0),
+            "property_id": property_id, "client_slug": client_slug,
+            "date": _to_date(d[0]), "session_source": d[1],
+            "session_medium": d[2], "session_campaign_name": d[3],
+            "sessions": int(m[0] or 0), "bounce_rate": float(m[1] or 0),
+            "avg_session_duration": float(m[2] or 0), "page_views": int(m[3] or 0),
         })
 
-    # --- Conversions ---
     resp2 = client.run_report(RunReportRequest(
         property=f"properties/{property_id}",
         dimensions=[Dimension(name="date"), Dimension(name="eventName")],
@@ -103,12 +94,9 @@ def run(property_id: str, client_slug: str):
         d = [v.value for v in row.dimension_values]
         m = [v.value for v in row.metric_values]
         conversion_rows.append({
-            "property_id": property_id,
-            "client_slug": client_slug,
-            "date": _to_date(d[0]),
-            "event_name": d[1],
-            "event_count": int(m[0] or 0),
-            "conversions": float(m[1] or 0),
+            "property_id": property_id, "client_slug": client_slug,
+            "date": _to_date(d[0]), "event_name": d[1],
+            "event_count": int(m[0] or 0), "conversions": float(m[1] or 0),
         })
 
     ch = get_client()

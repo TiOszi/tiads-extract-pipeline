@@ -1,24 +1,24 @@
 import os
 import clickhouse_connect
 from clickhouse_connect.driver.client import Client
+import dlt
 
 
 def get_client() -> Client:
-    """Retorna cliente ClickHouse via HTTP (porta 8123)."""
+    """Retorna cliente ClickHouse via HTTP (porta 8123) usando dlt.secrets."""
     return clickhouse_connect.get_client(
-        host=os.environ["CLICKHOUSE_HOST"],
-        port=int(os.environ.get("CLICKHOUSE_HTTP_PORT", "8123")),
-        username=os.environ["CLICKHOUSE_USER"],
-        password=os.environ["CLICKHOUSE_PASSWORD"],
-        database=os.environ["CLICKHOUSE_DATABASE"],
+        host=dlt.secrets["clickhouse.host"],
+        port=int(dlt.secrets["clickhouse.http_port"]),
+        username=dlt.secrets["clickhouse.username"],
+        password=dlt.secrets["clickhouse.password"],
+        database=dlt.secrets["clickhouse.database"],
         secure=False,
     )
 
 
 def ensure_table(client: Client, dataset: str, table: str, columns: dict) -> None:
-    """Cria tabela se não existir e adiciona colunas faltantes se já existir."""
+    """Cria banco e tabela no ClickHouse se não existirem."""
     client.command(f"CREATE DATABASE IF NOT EXISTS `{dataset}`")
-
     cols_ddl = ",\n    ".join(
         f"`{col}` {dtype}" for col, dtype in columns.items()
     )
@@ -30,8 +30,6 @@ def ensure_table(client: Client, dataset: str, table: str, columns: dict) -> Non
         ENGINE = MergeTree()
         ORDER BY tuple()
     """)
-
-    # Adiciona colunas faltantes (idempotente)
     existing = {
         row[0]
         for row in client.query(

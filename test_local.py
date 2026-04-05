@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Carrega .env da raiz do projeto
+# Carrega .env da raiz do projeto (apenas META_ADS_ACCOUNT_ID, CLIENT_SLUG, etc.)
 load_dotenv(Path(__file__).parent / ".env")
 
 # Adiciona pipelines/ ao path
@@ -27,9 +27,9 @@ def test_clickhouse():
 def test_meta_ads():
     print("\n📘 Testando Meta Ads...")
     import meta_ads
+    # access_token agora vem do .dlt/secrets.toml automaticamente
     total = meta_ads.run(
         account_id=os.environ["META_ADS_ACCOUNT_ID"],
-        access_token=os.environ["META_ADS_ACCESS_TOKEN"],
         client_slug=os.environ.get("CLIENT_SLUG", "teste"),
     )
     print(f"✅ Meta Ads OK — {total} registros")
